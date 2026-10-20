@@ -1,0 +1,38 @@
+{
+  "name": "claude-skill-loop",
+  "version": "2.4.5",
+  "description": "Turn development lessons into reusable Claude Code skills — analyze patterns, detect gaps, check health",
+  "type": "module",
+  "bin": {
+    "claude-skill-loop": "skill-loop.js"
+  },
+  "files": [
+    "skill-loop.js",
+    "README.md",
+    "README.ja.md",
+    "LICENSE",
+    "examples/",
+    "commands/",
+    "skills/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aliksir/lesson-skill-loop.git"
+  },
+  "keywords": [
+    "claude-code",
+    "skill",
+    "lessons",
+    "feedback-loop",
+    "cli"
+  ],
+  "author": "aliksir",
+  "license": "MIT",
+  "scripts": {
+    "start": "node skill-loop.js",
+    "test": "node --test test/skill-loop.test.mjs"
+  }
+}

@@ -1,0 +1,408 @@
+# lesson-skill-loop
+
+開発の教訓を再利用可能なスキルに自動変換する。
+
+**[English README](README.md)**
+
+## 何をするツールか
+
+開発者はバグ・インシデント・ミスから教訓を蓄積する。しかしMarkdownに書いた教訓は再読されることが少ない。このツールはそのループを閉じる：
+
+```
+教訓（過去の失敗）→ 分析 → スキル化提案 → スキル（チェックリスト）
+                                                    ↓
+                                               スキル使用
+                                                    ↓
+                                               新たな教訓
+                                                    ↓
+                                            スキル改善 or 廃止
+```
+
+## クイックスタート
+
+```bash
+# インストール不要で即実行（npx）
+npx claude-skill-loop examples/lessons
+
+# グローバルインストール
+npm install -g claude-skill-loop
+claude-skill-loop /path/to/your/lessons
+```
+
+## モード
+
+### 分析（CLI）
+
+| モード | コマンド | 内容 |
+|-------|---------|------|
+| **分析** | `claude-skill-loop [dir]` | タグ出現回数をカウント、3回以上のパターンをスキル化提案 |
+| **差分** | `claude-skill-loop --sync [dir]` | 既存スキルと教訓を比較、未反映の教訓を検出 |
+| **健全性** | `claude-skill-loop --health [dir]` | スキルの鮮度と根拠の強さをチェック |
+| **マップ** | `claude-skill-loop --map [dir]` | スキル⇔教訓の対応を本文込みで表示（トレーサビリティ） |
+| **全部** | `claude-skill-loop --all [dir]` | 全モード実行 |
+
+### 記録（スキル — Coworkでも動作）
+
+| コマンド | 内容 |
+|---------|------|
+| `/lesson [tag] 説明` | タグ付きで教訓を記録 |
+| `/lesson list` | 記録済みの教訓を一覧表示 |
+| `/lesson tags` | タグの出現回数を集計 |
+| `/lesson search キーワード` | キーワードで教訓を検索 |
+
+作業中に教訓を記録し、`/skill-loop` で分析してフィードバックループを回す。
+
+## オプション
+
+| オプション | 説明 |
+|-----------|------|
+| `--json` | JSON形式で出力（スクリプト連携・CI向け） |
+| `--dir <path>` | 教訓ディレクトリを指定（位置引数の代わり） |
+| `--skills-dir <path>` | スキルディレクトリを指定 |
+| `--for <path>` | **(v2.3.0+)** `<path>` で検出したスタックに関連する教訓のみ表示。下記「スタック対応フィルタ」参照 |
+| `--merge-twice` | **(v2.4.0+)** 同テーマで重複している教訓ペアを検出（統合候補）。下記「同テーマ統合候補検出」参照 |
+| `--days <n>` | **(v2.4.0+)** `--merge-twice` での「新規 lesson」判定ウィンドウ（mtime ベース、デフォルト: 30 日） |
+| `--threshold <n>` | スキル化提案の閾値（デフォルト: 3） |
+
+## スタック対応フィルタ（`--for`、v2.3.0+）
+
+`--for <project-path>` は対象プロジェクトの技術スタックをマニフェストファイルから検出し、そのスタックに関連する教訓のみを表示します。「このプロジェクトで気をつけるべき過去の失敗」を浮上させる機能で、汎用スキルを配布する `autoskills` 等とは補完関係にあります。
+
+```bash
+# ./my-next-app のスタックに関連する教訓のみ表示
+claude-skill-loop --for ./my-next-app ~/.claude/lessons
+
+# 任意のモードと組み合わせ可能
+claude-skill-loop --all --for ./my-rust-service ~/.claude/lessons
+```
+
+**対応マニフェスト（v2.3.0）**: `package.json` / `requirements.txt` / `pyproject.toml` / `Pipfile` / `Cargo.toml` / `go.mod` / `Gemfile` / `composer.json`。トップレベルのみ走査（モノレポ非対応、v2.4.0 で対応予定）。
+
+**パスの解釈**: 相対パスはカレントディレクトリ基準で解決されます。対象はディレクトリ必須（ファイルパスはエラー）。
+
+**フレームワーク階層**: 親フレームワークのタグも自動的に含まれます。例: Next.js プロジェクトは `[react]` 教訓も、Nuxt プロジェクトは `[vue]` 教訓も表示対象になります。
+
+**出力**: `--json` モードでは、`--for` 指定時のみトップレベルに `stack` フィールドが追加されます:
+
+```json
+{
+  "mode": "analyze",
+  "tags": [...],
+  "stack": {
+    "projectDir": "/abs/path/to/project",
+    "languages": ["javascript"],
+    "technologies": ["react", "next", "typescript"],
+    "sources": ["package.json"],
+    "hardTags": ["[react]", "[next]", "[nextjs]", "[typescript]", "[javascript]"],
+    "softTags": ["[hooks]", "[ssr]", "[frontend]", "[types]"],
+    "errors": []
+  }
+}
+```
+
+`--for` 未指定時の JSON 出力は v2.2.x と 1 byte も変わりません（既存 CI 連携を保護）。
+
+## 同テーマ統合候補検出（`--merge-twice`、v2.4.0+）
+
+`--merge-twice` は同テーマで重複している教訓ペアを検出し、統合候補として浮上させます。[`claude-smart`](https://github.com/ReflexioAI/claude-smart) の「2 度発火統合（twice-fire merge）」思想を取り込んだ機能で、同テーマで 2 度教訓が記録された = 単一ファイルに統合すべきシグナル、として扱います。
+
+```bash
+# 教訓ディレクトリ内の統合候補を検出
+claude-skill-loop --merge-twice ~/.claude/lessons
+
+# 「新規」ウィンドウを直近 7 日に絞る
+claude-skill-loop --merge-twice --days 7 ~/.claude/lessons
+
+# 機械可読 JSON 出力
+claude-skill-loop --merge-twice --json ~/.claude/lessons
+```
+
+**判定ルール**: 以下の **両条件** を満たすペアを同テーマとして検出:
+1. **主タグ一致**: カテゴリタグが 1 件以上共通（カテゴリタグ集合は `dev-lessons.md` から動的に導出、フォールバックは全 `[tag]` の和集合）
+2. **キーワード Jaccard ≥ 0.20**: タイトル + 最初の H2 セクション本文から ASCII 英数字トークン + 連続 CJK スパンを抽出
+
+**判定対象範囲**: `(新規 × 新規) ∪ (新規 × 既存)` の全ペア（「新規」= mtime が `--days` 以内、デフォルト 30 日）。新規同士の同テーマも検出可能。
+
+**出力例（テキストモード）**:
+```
+🔗 統合候補検出 (--merge-twice、直近 30 日 vs 既存)
+================================================
+カテゴリタグ集合: 69 件
+新規 lesson: 21 件 / 全 lesson: 25 件
+
+✅ 統合候補なし
+   閾値: 主タグ一致 >= 1 AND キーワード Jaccard >= 0.2
+```
+
+**dry-run のみ**: 本リリースは候補浮上のみでファイルは一切変更しません。出力を見て手動で統合判断してください。`--execute` モード（実統合）は **v2.4.5 で実装済み**（下記 Phase 2 セクション参照）。
+
+**v2.4.1 での改善**（本リリース）: キーワード抽出が **連続カタカナスパン**（2 文字以上）も拾うようになり、日本語短文 lesson ペアでも Jaccard 0.20 閾値に到達しやすくなりました。**shared category tags** も Jaccard の分子・分母に算入されます（`tag:` prefix で keywords との衝突を回避）。
+
+**既知の限界（継続）**:
+- `--merge-twice` と `--for <project>` は**独立**しており、併用時 `--for` フィルタは他モード（`--analyze` / `--sync` / `--health` / `--map`）には適用されますが、`--merge-twice` のペア検出には**適用されません**。`--merge-twice` は常に `LESSON_FILES` 全体をスキャンします。
+
+## merge-plan.json の dry-run 解析（`--apply-plan`、v2.4.4+ Phase 1）
+
+`--apply-plan <path>` は `--merge-twice --execute` が書き出した `merge-plan.json` を読み取り、各 candidate の処理予定を **dry-run でサマリ出力**します。`action` フィールド（`merge` / `skip` / `ignore`）を集計し、対象ファイルを一覧化します。
+
+**Phase 1（本セクション）**: バリデーションとサマリ出力のみで、**ファイルは一切変更しません**。実際の統合処理とロールバックは **v2.4.5+ (Phase 2) で実装済み** — 次のセクション参照。
+
+```bash
+# 1) --merge-twice --execute で merge-plan.json を生成
+claude-skill-loop --merge-twice --execute --no-version-check
+
+# 2) merge-plan.json を手動編集（各 candidate の "action": "TBD" を merge/skip/ignore に変更）
+$EDITOR merge-plan.json
+
+# 3) plan を dry-run 解析
+claude-skill-loop --apply-plan ./merge-plan.json
+
+# JSON 出力（CI 連携用）
+claude-skill-loop --apply-plan ./merge-plan.json --json
+```
+
+出力例:
+
+```
+📋 merge-plan.json を読み込みました (./merge-plan.json)
+   version: 2.4.3
+   generated_at: 2026-05-24T08:00:00.000Z
+   totalCandidates: 3
+
+📊 サマリ:
+   merge: 1 件
+   skip: 1 件
+   ignore: 1 件
+
+📝 merge 対象 (1 件):
+   1. lessons/recent.md ⇐ lessons/old.md (jaccard: 0.42)
+
+⚠️  これは dry-run です。実マージは --execute で実行可能 (v2.4.5+)。
+```
+
+**バリデーションルール**:
+- `candidates[].action` は `merge` / `skip` / `ignore` のいずれかのみ許可。**`TBD` 残存は exit 1** で拒否（手動レビュー必須を強制）
+- 必須フィールド（`version` / `candidates` / `newFile` / `existingFile` / `action`）欠落 → exit 1
+- 不正 JSON / ファイル不在 → exit 1
+
+**なぜ段階導入か**: 実マージはファイル append / 削除 / git commit という破壊操作を含むため、Phase 1 で JSON スキーマとバリデーションを確定させ、Phase 2 で実マージロジックを安全に積み上げます。
+
+## merge-plan.json の実マージとロールバック（`--apply-plan --execute` / `--rollback-plan`、v2.4.5+、Phase 2）
+
+`v2.4.5` で **実マージ実行** と **ロールバック機能** を追加（Phase 1 dry-run の上に積み上げ）。
+
+### 実マージ（`--apply-plan --execute`）
+
+```bash
+# 1) merge-plan.json を生成し、各 candidate の "action" を手動編集（Phase 1 と同じ）
+claude-skill-loop --merge-twice --execute --no-version-check
+$EDITOR merge-plan.json
+
+# 2) 実マージ実行（破壊操作！）
+claude-skill-loop --apply-plan ./merge-plan.json --execute
+```
+
+`candidate.action === 'merge'` の各 candidate について:
+
+- `existingFile` を `./.apply-plan-backup/{stamp}/backup/{uuid}.md` に backup
+- `newFile` を `./.apply-plan-backup/{stamp}/moved/{uuid}.md` に移動
+- `newFile` の内容を `existingFile` に区切り文字 `\n\n---\n\n` 付きで append
+- 同じ backup ディレクトリに `restore-manifest.json` を書き出し
+
+`skip` / `ignore` は manifest に記録されるが、ファイル変更は発生しない。
+
+### ロールバック（`--rollback-plan`）
+
+```bash
+# --execute 前の状態に完全復元（上記で作成された backup ディレクトリを指定）
+claude-skill-loop --rollback-plan ./.apply-plan-backup/20260524_220530_847_12345
+```
+
+rollback は backup から `existingFile` と `newFile` を元の内容に復元する。manifest の `rolled_back_at` フィールドが更新され、**同じ backup ディレクトリは 2 回 rollback できない**（再実行で exit 1）。
+
+### 推奨 `.gitignore`
+
+backup ディレクトリには教訓内容のスナップショットが入るため、commit しないこと。
+
+```gitignore
+.apply-plan-backup/
+```
+
+### 安全性
+
+- `--apply-plan` / `--rollback-plan` は他のモード（`--sync` / `--health` / `--map` / `--all` / `--merge-twice` および互いに）と同時指定不可（exit 1）
+- manifest の `version: "1.0"` により将来の互換 migration が可能
+- `merge-plan.json` 内のパスは execute 時に絶対パスへ正規化されるため、rollback 時の CWD が異なっても復元先が狂わない
+
+## 教訓ファイルの書き方
+
+タグ付きの見出しを持つMarkdownファイル：
+
+```markdown
+### レート制限 `[api]` `[auth]`
+- **レート制限ヘッダーを必ず確認**: X-RateLimit-Remainingで残り回数を把握
+- **指数バックオフを実装**: 1秒→2秒→4秒、最大3回リトライ
+```
+
+`[brackets]` 内のタグがキー。同じタグが3回以上の見出しに出現すると、スキル化を提案する。
+
+## スキルの形式
+
+Claude Code互換のチェックリスト：
+
+```markdown
+---
+name: api-checklist
+description: 過去の教訓に基づくAPI連携チェックリスト
+---
+
+# API連携チェックリスト
+
+- [ ] **レート制限対応**: X-RateLimit-Remainingを確認
+- [ ] **APIキーは環境変数**: ソースコードにハードコードしない
+```
+
+`*-checklist` という名前のスキルは `--sync` と `--health` で自動検出される。
+
+## 環境変数
+
+| 変数 | デフォルト | 説明 |
+|------|----------|------|
+| `LESSON_SKILL_LESSONS_DIR` | `./examples/lessons` | 教訓ファイルのパス（単一ディレクトリ） |
+| `LESSON_SKILL_SCAN_PATHS` | （`LESSONS_DIR` を使用） | カンマ区切りのスキャンパス（ファイル/ディレクトリ混在可） |
+| `LESSON_SKILL_SKILLS_DIR` | `~/.claude/skills` | スキルディレクトリのパス |
+| `CLAUDE_SKILLS_DIR` | `~/.claude/skills` | スキルディレクトリのフォールバック |
+
+### 複数パスのスキャン
+
+教訓が複数箇所に分散している場合、`LESSON_SKILL_SCAN_PATHS` を使う:
+
+```bash
+# ディレクトリとファイルの両方をスキャン
+LESSON_SKILL_SCAN_PATHS="memory/lessons/,memory/dev-lessons.md" claude-skill-loop
+
+# 複数ディレクトリをスキャン
+LESSON_SKILL_SCAN_PATHS="lessons/,retrospectives/,postmortems/" claude-skill-loop
+```
+
+各パスはディレクトリ（`*.md` を再帰スキャン）でも単体 `.md` ファイルでもOK。
+
+## JSON出力
+
+スクリプト連携やCI向けに `--json` が使えます：
+
+```bash
+claude-skill-loop --json --all examples/lessons | jq '.analyze.candidates'
+```
+
+## Claude Codeでの使い方
+
+1. **作業する** — バグが起きたら `lessons/*.md` にタグ付きで教訓を記録
+2. **ツールを実行** — `claude-skill-loop --all` で繰り返しパターンを確認
+3. **スキル作成** — Claude Codeの `/skill-creator` で提案をスキルに変換
+4. **スキル改善** — `--sync` が新しい教訓を検出したらスキルに項目追加
+5. **スキル廃止** — `--health` が根拠の弱いスキルや古いスキルを警告
+
+### プラグイン構造（commands/）
+
+`commands/` ディレクトリに Claude Code スラッシュコマンドの定義ファイルが含まれています：
+
+| ファイル | スラッシュコマンド | 内容 |
+|---------|----------------|------|
+| `commands/skill-loop.md` | `/skill-loop` | 全モード実行（analyze + sync + health + map） |
+| `commands/skill-loop-health.md` | `/skill-loop-health` | 健全性チェックのみ |
+| `commands/skill-loop-sync.md` | `/skill-loop-sync` | 差分チェックのみ |
+
+任意のファイルを `~/.claude/commands/` にコピーしてパスをカスタマイズしてください。
+
+## Bash版からの移行
+
+Bash版（`lesson-skill-check.sh`）は v2.2.0 で削除されました。コマンドの互換性は維持されています：
+
+```bash
+# 旧Bash版
+bash lesson-skill-check.sh --all
+
+# Node.js版（同等）
+claude-skill-loop --all
+```
+
+全フラグ（`--sync`, `--health`, `--map`, `--all`）はそのまま使えます。Node.js版では `--json`, `--threshold`, `--dir`, `--skills-dir`, `--self-update` が追加されています。
+
+## Claude Cowork対応
+
+**Claude Cowork**（ブラウザベースの共同作業）でも動作します。Bashが使えない環境では、Claudeの組み込みツール（Read, Glob, Grep）で同等の分析を実行します。
+
+`skills/skill-loop/SKILL.md` に全4モード（analyze/sync/health/map）の手順が記述されています。
+
+### 制約事項
+
+Coworkはプロジェクト内のファイルのみアクセス可能です。**教訓ファイル（`lessons/*.md`）がプロジェクトリポジトリ内に存在する場合のみ**使用できます。教訓がローカル環境（`~/.claude/memory/lessons/` 等）にのみある場合は、CLI版（`npx claude-skill-loop`）を使用してください。
+
+### セットアップ手順
+
+#### 1. クローンまたはダウンロード
+
+```bash
+git clone https://github.com/aliksir/lesson-skill-loop.git
+```
+
+または [Releases](https://github.com/aliksir/lesson-skill-loop/releases) ページからZIPをダウンロード。
+
+#### 2. スキルをClaudeのスキルディレクトリにコピー
+
+```bash
+cp -r lesson-skill-loop/skills/skill-loop ~/.claude/skills/
+cp -r lesson-skill-loop/skills/lesson ~/.claude/skills/
+```
+
+2つのスキルがインストールされます:
+- `~/.claude/skills/skill-loop/SKILL.md` — 教訓を分析してスキル化候補を提案
+- `~/.claude/skills/lesson/SKILL.md` — タグ付きで教訓を記録
+
+#### 3. 動作確認
+
+Claude Coworkセッションで以下を入力:
+
+```
+/lesson [test] テスト教訓です
+/lesson list
+/skill-loop
+```
+
+#### 4. Coworkでの完全なループ
+
+```
+/lesson [api] Rate limitのヘッダーを必ず確認する       ← 記録
+/lesson [api] リトライはexponential backoffで          ← さらに記録
+/lesson tags                                           ← タグ集計を確認
+/skill-loop                                            ← 分析→スキル化候補
+```
+
+教訓ファイルの事前準備は不要。`/lesson` が `lessons/dev-lessons.md` を自動作成します。
+
+### CLIとCoworkの比較
+
+| 機能 | CLI (`npx claude-skill-loop`) | Cowork (`/skill-loop`) |
+|------|-------------------------------|------------------------|
+| Analyzeモード | ✅ | ✅ |
+| Syncモード | ✅ | ✅ |
+| Healthモード | ✅ | ✅（ファイル日時は「不明」になる場合あり） |
+| Mapモード | ✅ | ✅ |
+| JSON出力 | ✅ `--json` | ❌（Coworkでは不要） |
+| セルフアップデート | ✅ `--self-update` | ❌（SKILL.mdを再コピーして更新） |
+| 閾値カスタマイズ | ✅ `--threshold N` | ❌（3固定） |
+| 速度 | 高速（Node.jsネイティブ） | やや遅い（Claudeがファイルを1つずつ読む） |
+
+## 動作要件
+
+- Node.js 18+
+
+## 参考
+
+- [EvoSkill](https://arxiv.org/abs/2603.02766) — マルチエージェントシステムの自動スキル発見
+- [猫軍団](https://github.com/aliksir/neko-gundan) — Claude Codeマルチエージェントオーケストレーション
+
+## ライセンス
+
+MIT
